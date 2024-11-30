@@ -166,3 +166,82 @@ class SiaTwitterOfficial(SiaClient):
     def get_conversation(self, conversation_id: str) -> list[SiaMessageSchema]:
         messages = self.memory.get_messages(conversation_id=conversation_id, sort_by="wen_posted", sort_order="asc", flagged=False)
         return messages
+
+
+    def get_notifications(self, since_id=None) -> list[SiaMessageSchema]:
+        """
+        Fetch notifications (mentions) for the authenticated user
+        
+        Args:
+            since_id (str, optional): Only return notifications after this ID
+            
+        Returns:
+            list[SiaMessageSchema]: List of messages from notifications
+        """
+        messages = []
+        try:
+            mentions = self.client.get_users_mentions(
+                id=self.client.get_me().data.id,  # Get authenticated user's ID
+                since_id=since_id,
+                tweet_fields=["conversation_id", "created_at", "in_reply_to_user_id"],
+                expansions=["author_id", "referenced_tweets.id"]
+            )
+            
+            if not mentions.data:
+                return messages
+                
+            for mention in mentions.data:
+                # Skip if we've already processed this notification
+                if self.memory.has_processed_notification(str(mention.id)):
+                    log_message(self.logger, "info", self, f"Skipping already processed notification: {mention.id}")
+                    continue
+
+                # Skip mentions from the character itself
+                author = next((user.username for user in mentions.includes['users'] 
+                             if user.id == mention.author_id), None)
+                if author == self.character.twitter_username:
+                    self.memory.add_processed_notification(str(mention.id))  # Mark self-mentions as processed
+                    continue
+                    
+                # Moderate content
+                try:
+                    from openai import OpenAI
+                    client = OpenAI()
+                    moderation_response = client.moderations.create(
+                        model="omni-moderation-latest",
+                        input=mention.text,
+                    )
+                    flagged = moderation_response.results[0].flagged
+                    if flagged:
+                        self.memory.add_processed_notification(str(mention.id), flagged=True)
+                        continue
+                except Exception as e:
+                    log_message(self.logger, "error", self, f"Error moderating mention: {e}")
+                    flagged = False
+                    moderation_response = None
+                
+                try:
+                    message = self.memory.add_message(
+                        SiaMessageGeneratedSchema(
+                            conversation_id=str(mention.data['conversation_id']),
+                            content=mention.text,
+                            platform="twitter",
+                            author=author,
+                            response_to=str(next((ref.id for ref in mention.referenced_tweets if ref.type == "replied_to"), None)) if mention.referenced_tweets else None,
+                            wen_posted=mention.created_at,
+                            flagged=int(flagged),
+                            metadata=moderation_response
+                        ),
+                        tweet_id=str(mention.id),
+                        original_data=mention.data
+                    )
+                    messages.append(message)
+                except Exception as e:
+                    log_message(self.logger, "error", self, f"Error adding mention to memory: {e}")
+                    # Still mark as processed even if we failed to add it
+                    self.memory.add_processed_notification(str(mention.id))
+                    
+        except Exception as e:
+            log_message(self.logger, "error", self, f"Error getting notifications: {e}")
+            
+        return messages
