@@ -144,6 +144,15 @@ class Sia:
 
                 Conversation:
                 {conversation}
+                
+                First, determine if this message warrants a response with an image. Consider:
+                1. Is the message asking about or discussing art/visuals?
+                2. Would an image significantly enhance your response?
+                3. Is the conversation context visual in nature?
+                
+                Format your response as:
+                NEEDS_IMAGE: true/false
+                RESPONSE: your actual response
             """),
             ("user", """
                 Generate your response to the message. Your response length must be fewer than 30 words.
@@ -165,9 +174,27 @@ class Sia:
         log_message(self.logger, "info", self, f"AI input: {ai_input}")
         generated_response = ai_chain.invoke(ai_input)
         
-                
+        # Parse the response to extract image need and content
+        response_lines = generated_response.content.split('\n')
+        needs_image = False
+        content = generated_response.content
+        
+        for line in response_lines:
+            if line.startswith('NEEDS_IMAGE:'):
+                needs_image = line.split(':')[1].strip().lower() == 'true'
+            elif line.startswith('RESPONSE:'):
+                content = line.split(':', 1)[1].strip()
+        
+        image_filepaths = []
+        if needs_image:
+            # Generate an image using DALL-E
+            image_url = generate_van_gogh_art(content[0:900])
+            image_filepath = f"media/{uuid4()}.png"
+            save_image_from_url(image_url, image_filepath)
+            image_filepaths.append(image_filepath)
+        
         generated_response_schema = SiaMessageGeneratedSchema(
-            content=generated_response.content,
+            content=content,
             platform=platform,
             author=self.character.name,
             character=self.character.name,
@@ -175,7 +202,7 @@ class Sia:
         )
         log_message(self.logger, "info", self, f"Generated response: {generated_response_schema}")
 
-        return generated_response_schema
+        return generated_response_schema, image_filepaths
 
 
     def publish_post(self, client: SiaClient, post: SiaMessageGeneratedSchema, media: dict = []) -> str:
