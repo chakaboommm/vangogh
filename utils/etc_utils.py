@@ -1,10 +1,5 @@
 import requests
-
-from utils.logging_utils import setup_logging, log_message, enable_logging
-logger = setup_logging()
-enable_logging(True)
-
-
+import os
 
 def save_image_from_url(image_url, save_path):
     response = requests.get(image_url)
@@ -20,10 +15,13 @@ def save_image_from_url(image_url, save_path):
 from langchain_community.utilities.dalle_image_generator import DallEAPIWrapper
 
 def generate_image_dalle(input_prompt):
-    try:
-        image_url = DallEAPIWrapper().run(input_prompt)
-        log_message(logger, "info", generate_image_dalle, f"Generated image with DALL-E: {image_url}")
-        return image_url
-    except Exception as e:
-        log_message(logger, "error", generate_image_dalle, f"Error generating image with DALL-E: {e}")
-        return None
+    image_url = DallEAPIWrapper(
+        model="dall-e-3",
+    ).run(input_prompt)
+    return image_url
+
+def generate_van_gogh_art(input_prompt):
+    van_gogh_style = "in Vincent van Gogh's post-impressionist style, featuring his signature elements: dynamic swirling brushstrokes, intense colors with bold contrasts, and thick impasto technique. The color palette should emphasize deep blues, bright yellows, and rich earth tones, creating an emotionally charged atmosphere that captures the artist's distinctive vision of nature's energy and movement."
+    combined_prompt = f"{input_prompt}, rendered {van_gogh_style}"
+    image_url = generate_image_dalle(combined_prompt)
+    return image_url
